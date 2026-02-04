@@ -15,7 +15,7 @@ import { useRouter } from 'expo-router';
 import foods from '../../data/foods';
 import { TrendingCard } from '../../components/FoodCard';
 
-import { searchMeals, getMealsByCountry, AREAS } from '../../services/mealdb';
+import { searchMeals, getMealsByCountry, getMealById, searchByIngredients, AREAS } from '../../services/mealdb';
 import { searchRecipe, getRecipesByIngredients, getRecipeDetails } from '../../services/gemini';
 
 const YOUTUBE_VIDEOS = [
@@ -78,9 +78,23 @@ export default function HomeScreen() {
     setIngredientLoading(true);
     setIngredientResults([]);
     setIngredientError('');
+
+    // Try TheMealDB first (FREE, no rate limits)
+    try {
+      const mealdbResults = await searchByIngredients(q);
+      if (mealdbResults.length > 0) {
+        setIngredientResults(mealdbResults.map(r => ({ ...r, source: 'mealdb' })));
+        setIngredientLoading(false);
+        return;
+      }
+    } catch (e) {
+      console.log('MealDB search failed, trying Gemini...');
+    }
+
+    // Fallback to Gemini AI if MealDB has no results
     try {
       const results = await getRecipesByIngredients(q);
-      setIngredientResults(results);
+      setIngredientResults(results.map(r => ({ ...r, source: 'gemini' })));
     } catch (e) {
       setIngredientError(e.message || 'Failed to get suggestions');
     }
@@ -91,6 +105,19 @@ export default function HomeScreen() {
     setLoadingDish(dish.id);
     setIngredientError('');
     try {
+      // If from MealDB, get details directly (free)
+      if (dish.source === 'mealdb') {
+        const recipe = await getMealById(dish.id);
+        if (recipe) {
+          router.push({
+            pathname: '/recipe/ai',
+            params: { data: JSON.stringify(recipe) },
+          });
+          setLoadingDish(null);
+          return;
+        }
+      }
+      // Otherwise use Gemini
       const recipe = await getRecipeDetails(dish.name);
       router.push({
         pathname: '/recipe/ai',
@@ -237,6 +264,9 @@ export default function HomeScreen() {
                 onPress={() => handleIngredientDishPress(dish)}
                 disabled={loadingDish !== null}
               >
+                {dish.image && (
+                  <Image source={{ uri: dish.image }} style={styles.ingredientImage} />
+                )}
                 <View style={styles.ingredientCardLeft}>
                   <Text style={styles.ingredientDishName}>{dish.name}</Text>
                   <Text style={styles.ingredientDishDesc} numberOfLines={2}>{dish.description}</Text>
@@ -248,6 +278,11 @@ export default function HomeScreen() {
                     <View style={[styles.metaTag, dish.difficulty === 'Easy' && styles.metaTagEasy, dish.difficulty === 'Hard' && styles.metaTagHard]}>
                       <Text style={styles.metaText}>{dish.difficulty}</Text>
                     </View>
+                    {dish.source === 'mealdb' && (
+                      <View style={[styles.metaTag, { backgroundColor: '#e8f5e9' }]}>
+                        <Text style={[styles.metaText, { color: '#2e7d32' }]}>Free</Text>
+                      </View>
+                    )}
                   </View>
                 </View>
                 {loadingDish === dish.id ? (
@@ -641,6 +676,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff8f0',
     borderWidth: 1,
     borderColor: '#e67e22',
+  },
+  ingredientImage: {
+    width: 60,
+    height: 60,
+    borderRadius: 10,
+    marginRight: 12,
   },
   ingredientCardLeft: {
     flex: 1,
